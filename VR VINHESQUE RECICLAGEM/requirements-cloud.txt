@@ -1,0 +1,2 @@
+# O servidor mobile usa apenas bibliotecas padrao do Python.
+# Mantenha este arquivo para provedores que exigem requirements.txt.

@@ -1,0 +1,56 @@
+VR VINHESQUE RECICLAGEM - HOSPEDAGEM NA NUVEM
+
+OBJETIVO:
+O celular acessa um link HTTPS fixo, independente do notebook da cliente.
+O app abre pelo navegador ou pela tela inicial, salva offline no celular e sincroniza
+com o servidor na nuvem quando houver internet.
+
+IMPORTANTE SOBRE O BANCO DO NOTEBOOK:
+O notebook da empresa continua com o sistema desktop e o banco local vr_reciclagem.db.
+A nuvem funciona como ponte:
+
+1. Celular envia os lancamentos para a nuvem.
+2. Notebook da empresa puxa os lancamentos da nuvem.
+3. O sincronizador importa os lancamentos no banco local ja instalado no notebook.
+
+Assim o link do celular fica independente, mas o sistema desktop da empresa continua
+recebendo os dados no banco local.
+
+O QUE FOI PREPARADO:
+- sync_server.py aceita PORT, DB_PATH, RECEIPTS_DIR e SYNC_TOKEN por variavel de ambiente.
+- mobile_app ja permite configurar um endereco HTTPS e um codigo de sincronizacao.
+- desktop_cloud_sync.py puxa os lancamentos da nuvem para o banco local do notebook.
+- render.yaml prepara um Web Service com disco persistente em /data.
+- Dockerfile permite hospedar em qualquer provedor que aceite container.
+
+CONFIGURACAO RECOMENDADA:
+1. Criar um servidor web Python no provedor escolhido.
+2. Usar comando de start:
+   python sync_server.py
+3. Configurar variaveis:
+   DB_PATH=/data/vr_reciclagem.db
+   RECEIPTS_DIR=/data/comprovantes
+   SYNC_TOKEN=um-codigo-secreto
+4. Ativar disco persistente em /data.
+5. Abrir a URL HTTPS gerada pelo provedor no celular.
+6. No Menu do app, preencher:
+   Endereco de sincronizacao = URL HTTPS do provedor
+   Codigo de sincronizacao = mesmo valor de SYNC_TOKEN
+
+CONFIGURAR O NOTEBOOK DA EMPRESA PARA PUXAR OS DADOS:
+1. No notebook da empresa, abra a pasta do sistema.
+2. Copie cloud_sync_config.example.json para cloud_sync_config.json.
+3. Edite cloud_sync_config.json:
+   cloud_url = URL HTTPS do provedor
+   sync_token = mesmo valor de SYNC_TOKEN
+4. Execute uma vez:
+   instalar_sincronizacao_nuvem.bat
+5. A partir dai, o notebook puxa os lancamentos da nuvem automaticamente ao entrar no Windows.
+
+IMPORTANTE:
+- Sem disco persistente, os dados podem sumir quando o provedor reiniciar o servico.
+- Na nuvem, o servidor nao imprime automaticamente na impressora da loja.
+- O comprovante da nuvem fica salvo no servidor em RECEIPTS_DIR.
+- Quando o notebook importar o lancamento, ele tambem gera o comprovante no banco/pasta local.
+- O notebook deixa de ser necessario para o celular abrir e lancar compras, mas precisa ficar
+  online em algum momento para puxar os dados para o banco local da empresa.
