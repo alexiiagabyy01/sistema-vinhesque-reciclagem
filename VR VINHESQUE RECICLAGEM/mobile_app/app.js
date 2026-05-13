@@ -565,7 +565,7 @@ function loadReceiptLogo() {
       const image = new Image();
       image.onload = () => resolve(image);
       image.onerror = () => resolve(null);
-      image.src = "./icons/logo-vinhesque-preta.png";
+      image.src = "./icons/logo-comprovante-mobile.png?v=14";
     });
   }
   return receiptLogoPromise;
@@ -766,6 +766,7 @@ function receiptCanvas(text, operation = currentReceiptOperation) {
 
 async function saveReceiptImage() {
   if (!currentReceiptText) return;
+  await drawReceiptPreview(currentReceiptOperation, currentReceiptText);
   const canvas = el("receiptCanvas");
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
   const file = new File([blob], `comprovante-${Date.now()}.png`, { type: "image/png" });
