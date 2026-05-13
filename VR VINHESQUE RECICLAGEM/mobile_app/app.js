@@ -565,7 +565,7 @@ function loadReceiptLogo() {
       const image = new Image();
       image.onload = () => resolve(image);
       image.onerror = () => resolve(null);
-      image.src = "./icons/logo-comprovante-mobile.png?v=14";
+      image.src = "./icons/logo-comprovante-mobile.png?v=15";
     });
   }
   return receiptLogoPromise;
@@ -599,13 +599,28 @@ function fitText(ctx, text, x, y, maxWidth) {
   ctx.fillText(`${safeText}...`, x, y);
 }
 
+function fitRightText(ctx, text, rightX, y, maxWidth) {
+  const value = String(text || "");
+  const originalFont = ctx.font;
+  const match = originalFont.match(/(\d+)px/);
+  let size = match ? Number(match[1]) : 18;
+  while (size > 12 && ctx.measureText(value).width > maxWidth) {
+    size -= 1;
+    ctx.font = originalFont.replace(/\d+px/, `${size}px`);
+  }
+  ctx.fillText(value, rightX, y);
+  ctx.font = originalFont;
+}
+
 function drawReceiptImage(canvas, operation, logo) {
   const receiptItems = consolidateReceiptItems(operation.itens || []);
   const totalWeight = receiptItems.reduce((sum, item) => sum + Number(item.peso_liquido || 0), 0);
-  const width = 620;
-  const rowHeight = 34;
-  const itemRowsHeight = Math.max(receiptItems.length, 1) * rowHeight;
-  const height = 500 + itemRowsHeight + (operation.observacao ? 70 : 0);
+  const rows = receiptItems.length ? receiptItems : [{ material_nome: "", peso_liquido: 0, desconto: 0, preco_kg: 0, subtotal: 0 }];
+  const observationLines = operation.observacao ? wrapReceiptLine(operation.observacao, 46) : [];
+  const width = 570;
+  const rowHeight = 39;
+  const baseHeight = 575;
+  const height = baseHeight + rows.length * rowHeight + observationLines.length * 22 + (observationLines.length ? 42 : 0);
   const scale = Math.max(window.devicePixelRatio || 1, 2);
   canvas.width = width * scale;
   canvas.height = height * scale;
@@ -615,16 +630,16 @@ function drawReceiptImage(canvas, operation, logo) {
   ctx.scale(scale, scale);
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, width, height);
+  ctx.textBaseline = "alphabetic";
 
-  let y = 18;
+  let y = 6;
   if (logo) {
-    const logoWidth = 220;
-    const logoHeight = 148;
+    const logoWidth = 240;
+    const logoHeight = 158;
     const ratio = Math.min(logoWidth / logo.width, logoHeight / logo.height);
     const drawWidth = logo.width * ratio;
     const drawHeight = logo.height * ratio;
     ctx.drawImage(logo, (width - drawWidth) / 2, y, drawWidth, drawHeight);
-    y += logoHeight + 6;
   } else {
     ctx.fillStyle = "#111111";
     ctx.textAlign = "center";
@@ -632,15 +647,14 @@ function drawReceiptImage(canvas, operation, logo) {
     ctx.fillText("VR VINHESQUE", width / 2, y + 48);
     ctx.font = "800 22px Arial, sans-serif";
     ctx.fillText("RECICLAGEM", width / 2, y + 82);
-    y += 128;
   }
 
   ctx.fillStyle = "#111111";
   ctx.textAlign = "center";
-  ctx.textBaseline = "alphabetic";
-  ctx.font = "18px Consolas, monospace";
+  ctx.font = "16px Consolas, monospace";
+  y = 194;
   ctx.fillText("SUSTENTABILIDADE QUE GERA VALOR", width / 2, y);
-  y += 32;
+  y += 34;
 
   const created = new Date(operation.created_at);
   const dateText = Number.isNaN(created.getTime())
@@ -649,11 +663,11 @@ function drawReceiptImage(canvas, operation, logo) {
   const control = operation.numero || operation.mobile_id || "MOBILE";
 
   ctx.textAlign = "left";
-  ctx.font = "22px Consolas, monospace";
-  ctx.fillText(`CONTROLE ${control}`, 14, y);
-  y += 28;
-  ctx.fillText(`DATA     ${dateText}`, 14, y);
-  y += 22;
+  ctx.font = "20px Consolas, monospace";
+  ctx.fillText(`CONTROLE ${control}`, 12, y);
+  y += 26;
+  ctx.fillText(`DATA    ${dateText}`, 12, y);
+  y += 18;
 
   ctx.strokeStyle = "#111111";
   ctx.lineWidth = 2;
@@ -661,89 +675,91 @@ function drawReceiptImage(canvas, operation, logo) {
   ctx.moveTo(12, y);
   ctx.lineTo(width - 12, y);
   ctx.stroke();
-  y += 24;
+  y += 22;
 
   ctx.textAlign = "center";
-  ctx.font = "700 22px Consolas, monospace";
+  ctx.font = "700 20px Consolas, monospace";
   ctx.fillText("DADOS DA OPERACAO", width / 2, y);
   y += 30;
   ctx.textAlign = "left";
-  ctx.font = "22px Consolas, monospace";
-  ctx.fillText("TIPO", 14, y);
-  ctx.fillText("Compra", 132, y);
-  y += 28;
-  ctx.fillText("CLIENTE", 14, y);
-  fitText(ctx, operation.cliente_nome || "", 132, y, width - 150);
-  y += 22;
+  ctx.font = "20px Consolas, monospace";
+  ctx.fillText("TIPO", 12, y);
+  ctx.fillText("Compra", 120, y);
+  y += 26;
+  ctx.fillText("CLIENTE", 12, y);
+  fitText(ctx, operation.cliente_nome || "", 120, y, width - 132);
+  y += 18;
 
   ctx.beginPath();
   ctx.moveTo(12, y);
   ctx.lineTo(width - 12, y);
   ctx.stroke();
-  y += 24;
+  y += 22;
 
   ctx.textAlign = "center";
-  ctx.font = "700 22px Consolas, monospace";
+  ctx.font = "700 20px Consolas, monospace";
   ctx.fillText("PRODUTOS", width / 2, y);
-  y += 28;
+  y += 25;
 
   ctx.textAlign = "left";
   ctx.font = "700 16px Consolas, monospace";
-  ctx.fillText("MATERIAL", 14, y);
+  ctx.fillText("MATERIAL", 12, y);
   ctx.textAlign = "right";
-  ctx.fillText("QTD", 278, y);
-  ctx.fillText("DESC", 360, y);
-  ctx.fillText("V/KG", 448, y);
-  ctx.fillText("TOTAL", width - 14, y);
-  y += 20;
+  ctx.fillText("QTD", 250, y);
+  ctx.fillText("DESC", 320, y);
+  ctx.fillText("V/KG", 405, y);
+  ctx.fillText("TOTAL", width - 12, y);
+  y += 23;
 
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(12, y);
   ctx.lineTo(width - 12, y);
   ctx.stroke();
-  y += 25;
+  y += 24;
 
   ctx.font = "700 19px Consolas, monospace";
-  const rows = receiptItems.length ? receiptItems : [{ material_nome: "", peso_liquido: 0, desconto: 0, preco_kg: 0, subtotal: 0 }];
   rows.forEach((item) => {
     ctx.textAlign = "left";
-    fitText(ctx, item.material_nome, 14, y, 195);
+    fitText(ctx, item.material_nome, 12, y, 176);
     ctx.textAlign = "right";
-    ctx.fillText(numberBr(item.peso_liquido), 278, y);
-    ctx.fillText(numberBr(item.desconto), 360, y);
-    ctx.fillText(numberBr(item.preco_kg), 448, y);
-    ctx.fillText(numberBr(item.subtotal), width - 14, y);
+    fitRightText(ctx, numberBr(item.peso_liquido), 250, y, 60);
+    fitRightText(ctx, numberBr(item.desconto), 320, y, 58);
+    fitRightText(ctx, numberBr(item.preco_kg), 405, y, 58);
+    fitRightText(ctx, numberBr(item.subtotal), width - 12, y, 110);
     y += rowHeight;
   });
 
   ctx.beginPath();
-  ctx.moveTo(12, y - 8);
-  ctx.lineTo(width - 12, y - 8);
+  ctx.moveTo(12, y - 11);
+  ctx.lineTo(width - 12, y - 11);
   ctx.stroke();
-  y += 18;
+  y += 11;
 
   ctx.textAlign = "left";
-  ctx.font = "22px Consolas, monospace";
-  ctx.fillText("PESO TOTAL", 14, y);
+  ctx.font = "20px Consolas, monospace";
+  ctx.fillText("PESO TOTAL", 12, y);
   ctx.textAlign = "right";
-  ctx.fillText(`${numberBr(totalWeight)} kg`, 452, y);
-  y += 36;
+  fitRightText(ctx, `${numberBr(totalWeight)} kg`, 410, y, 150);
+  y += 32;
 
   ctx.textAlign = "left";
   ctx.font = "700 26px Consolas, monospace";
-  ctx.fillText("TOTAL", 36, y);
+  ctx.fillText("TOTAL", 34, y);
   ctx.textAlign = "right";
-  ctx.fillText(money(operation.total), width - 22, y);
-  y += 46;
+  fitRightText(ctx, money(operation.total), width - 20, y, 210);
+  y += 38;
 
-  if (operation.observacao) {
+  if (observationLines.length) {
     ctx.textAlign = "left";
     ctx.font = "16px Consolas, monospace";
-    ctx.fillText("OBSERVACOES", 14, y);
+    ctx.fillText("OBSERVACOES", 12, y);
     y += 22;
-    fitText(ctx, operation.observacao, 14, y, width - 28);
-    y += 30;
+    observationLines.forEach((line) => {
+      fitText(ctx, line, 12, y, width - 24);
+      y += 22;
+    });
+    y += 12;
   }
 
   ctx.textAlign = "center";
