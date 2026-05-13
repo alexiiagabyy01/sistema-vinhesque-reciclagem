@@ -219,7 +219,8 @@ button {
 .quick-icon {
   width: 48px;
   height: 48px;
-  font-size: 1.55rem;
+  font-size: 1.8rem;
+  line-height: 1;
 }
 
 .quick-icon.green {
