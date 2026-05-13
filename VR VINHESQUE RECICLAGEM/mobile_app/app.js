@@ -729,6 +729,7 @@ function showView(name) {
   document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("active"));
   el(`${viewName}View`).classList.add("active");
+  document.querySelector(".floating-menu-button").hidden = viewName === "settings";
   document.querySelectorAll(`[data-tab="${name}"]`).forEach((item) => {
     if (item.classList.contains("nav-item")) item.classList.add("active");
   });

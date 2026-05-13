@@ -1,4 +1,4 @@
-const CACHE_NAME = "vinhesque-mobile-v9";
+const CACHE_NAME = "vinhesque-mobile-v10";
 const APP_SHELL = [
   "./",
   "./index.html",
