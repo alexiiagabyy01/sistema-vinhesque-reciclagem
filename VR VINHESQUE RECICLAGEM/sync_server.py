@@ -6,10 +6,11 @@ import shutil
 import socket
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 try:
     from PIL import Image, ImageWin
@@ -31,6 +32,24 @@ STATIC_DIR = BASE_DIR / "mobile_app"
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", "8765"))
 SYNC_TOKEN = os.environ.get("SYNC_TOKEN", "").strip()
+try:
+    APP_TIMEZONE = ZoneInfo(os.environ.get("APP_TIMEZONE", "America/Sao_Paulo"))
+except ZoneInfoNotFoundError:
+    APP_TIMEZONE = timezone(timedelta(hours=-3), "America/Sao_Paulo")
+
+
+def now_local():
+    return datetime.now(APP_TIMEZONE)
+
+
+def parse_mobile_datetime(value):
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return now_local()
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=APP_TIMEZONE)
+    return parsed.astimezone(APP_TIMEZONE)
 
 
 def money(value):
@@ -240,7 +259,7 @@ def fetch_catalog():
             WHERE ativo = 1
             ORDER BY nome
         """).fetchall()
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = now_local().strftime("%Y-%m-%d")
         resumo = conn.execute("""
             SELECT
                 COALESCE(SUM(CASE WHEN tipo = 'COMPRA' THEN 1 ELSE 0 END), 0) AS compras,
@@ -252,7 +271,7 @@ def fetch_catalog():
     return {
         "usuario": desktop_user_name(),
         "resumo_dia": dict(resumo) if resumo else {"compras": 0, "vendas": 0, "total_vendas": 0},
-        "ultima_sincronizacao": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "ultima_sincronizacao": now_local().strftime("%d/%m/%Y %H:%M"),
         "clientes": [dict(row) for row in clientes],
         "materiais": [dict(row) for row in materiais],
     }
@@ -639,10 +658,7 @@ def import_operation(operation):
         )
         total = sum(item["subtotal"] for item in normalized_items)
         raw_date = operation.get("created_at")
-        try:
-            data = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M:%S")
-        except (TypeError, ValueError):
-            data = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        data = parse_mobile_datetime(raw_date).strftime("%Y-%m-%d %H:%M:%S")
 
         cur = conn.cursor()
         cur.execute("""
@@ -689,7 +705,7 @@ def import_operation(operation):
         cur.execute("""
             INSERT INTO mobile_sync (mobile_id, transacao_id, status, payload, synced_at)
             VALUES (?, ?, ?, ?, ?)
-        """, (mobile_id, transacao_id, "synced", json.dumps(operation, ensure_ascii=False), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        """, (mobile_id, transacao_id, "synced", json.dumps(operation, ensure_ascii=False), now_local().strftime("%Y-%m-%d %H:%M:%S")))
         return {
             "ok": True,
             "mobile_id": mobile_id,
@@ -722,7 +738,7 @@ class SyncHandler(BaseHTTPRequestHandler):
                 "database": str(DB_PATH),
                 "receipts": str(RECEIPTS_DIR),
                 "auth_required": bool(SYNC_TOKEN),
-                "time": datetime.now().isoformat(timespec="seconds"),
+                "time": now_local().isoformat(timespec="seconds"),
             })
         if parsed.path == "/api/bootstrap":
             if not self.authorized():
@@ -798,7 +814,7 @@ class SyncHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def log_message(self, format, *args):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {self.address_string()} - {format % args}")
+        print(f"[{now_local().strftime('%H:%M:%S')}] {self.address_string()} - {format % args}")
 
 
 def main():
