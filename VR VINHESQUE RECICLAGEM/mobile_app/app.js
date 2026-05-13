@@ -18,11 +18,14 @@ let stagedItems = [];
 let editingOperationId = null;
 let editingOriginalCreatedAt = null;
 let currentReceiptText = "";
+let currentReceiptOperation = null;
 let operationsMode = "receipts";
+let receiptLogoPromise = null;
 
 const el = (id) => document.getElementById(id);
 const money = (value) => `R$ ${Number(value || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const kg = (value) => `${Number(value || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
+const numberBr = (value) => Number(value || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const parseDecimal = (value) => Number(String(value || "0").replace(/\./g, "").replace(",", ".")) || 0;
 const parseWeight = (value) => String(value || "").includes(",,")
   ? String(value).split(/,,+/).reduce((sum, part) => sum + parseDecimal(part), 0)
@@ -529,7 +532,7 @@ async function submitOperation(event) {
     };
     operation.comprovante = buildReceipt(operation);
     await saveOperation(operation);
-    showReceipt(operation.comprovante);
+    showReceipt(operation.comprovante, operation);
     resetForm();
     await refreshOperations();
   } catch (error) {
@@ -548,21 +551,62 @@ function resetForm() {
   setMode(mode);
 }
 
-function showReceipt(text) {
+function showReceipt(text, operation = null) {
   currentReceiptText = text;
+  currentReceiptOperation = operation;
   el("receiptText").textContent = text;
+  drawReceiptPreview(operation, text);
   el("receiptDialog").showModal();
 }
 
-function receiptCanvas(text) {
+function loadReceiptLogo() {
+  if (!receiptLogoPromise) {
+    receiptLogoPromise = new Promise((resolve) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => resolve(null);
+      image.src = "./icons/logo-vinhesque-preta.png";
+    });
+  }
+  return receiptLogoPromise;
+}
+
+function receiptOperationFromText(text) {
   const lines = String(text || "").split("\n");
+  const controle = (lines.find((line) => line.startsWith("CONTROLE")) || "").replace("CONTROLE", "").trim();
+  const dataLine = (lines.find((line) => line.startsWith("DATA")) || "").replace("DATA", "").trim();
+  const cliente = (lines.find((line) => line.startsWith("CLIENTE")) || "").replace("CLIENTE", "").trim();
+  const totalLine = [...lines].reverse().find((line) => line.startsWith("TOTAL")) || "";
+  return {
+    mobile_id: controle || "MOBILE",
+    tipo: "COMPRA",
+    cliente_nome: cliente || "",
+    created_at: dataLine,
+    itens: [],
+    total: parseDecimal(totalLine.replace("TOTAL", "").replace("R$", "").trim())
+  };
+}
+
+function fitText(ctx, text, x, y, maxWidth) {
+  let safeText = String(text || "");
+  if (ctx.measureText(safeText).width <= maxWidth) {
+    ctx.fillText(safeText, x, y);
+    return;
+  }
+  while (safeText.length > 1 && ctx.measureText(`${safeText}...`).width > maxWidth) {
+    safeText = safeText.slice(0, -1);
+  }
+  ctx.fillText(`${safeText}...`, x, y);
+}
+
+function drawReceiptImage(canvas, operation, logo) {
+  const receiptItems = consolidateReceiptItems(operation.itens || []);
+  const totalWeight = receiptItems.reduce((sum, item) => sum + Number(item.peso_liquido || 0), 0);
+  const width = 620;
+  const rowHeight = 34;
+  const itemRowsHeight = Math.max(receiptItems.length, 1) * rowHeight;
+  const height = 500 + itemRowsHeight + (operation.observacao ? 70 : 0);
   const scale = Math.max(window.devicePixelRatio || 1, 2);
-  const fontSize = 15;
-  const lineHeight = 22;
-  const padding = 22;
-  const width = 420;
-  const height = padding * 2 + lines.length * lineHeight;
-  const canvas = document.createElement("canvas");
   canvas.width = width * scale;
   canvas.height = height * scale;
   canvas.style.width = `${width}px`;
@@ -571,18 +615,158 @@ function receiptCanvas(text) {
   ctx.scale(scale, scale);
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = "#111827";
-  ctx.font = `${fontSize}px Consolas, monospace`;
-  ctx.textBaseline = "top";
-  lines.forEach((line, index) => {
-    ctx.fillText(line, padding, padding + index * lineHeight);
+
+  let y = 18;
+  if (logo) {
+    const logoWidth = 220;
+    const logoHeight = 148;
+    const ratio = Math.min(logoWidth / logo.width, logoHeight / logo.height);
+    const drawWidth = logo.width * ratio;
+    const drawHeight = logo.height * ratio;
+    ctx.drawImage(logo, (width - drawWidth) / 2, y, drawWidth, drawHeight);
+    y += logoHeight + 6;
+  } else {
+    ctx.fillStyle = "#111111";
+    ctx.textAlign = "center";
+    ctx.font = "800 38px Arial, sans-serif";
+    ctx.fillText("VR VINHESQUE", width / 2, y + 48);
+    ctx.font = "800 22px Arial, sans-serif";
+    ctx.fillText("RECICLAGEM", width / 2, y + 82);
+    y += 128;
+  }
+
+  ctx.fillStyle = "#111111";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.font = "18px Consolas, monospace";
+  ctx.fillText("SUSTENTABILIDADE QUE GERA VALOR", width / 2, y);
+  y += 32;
+
+  const created = new Date(operation.created_at);
+  const dateText = Number.isNaN(created.getTime())
+    ? String(operation.created_at || "")
+    : `${created.toLocaleDateString("pt-BR")} ${created.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+  const control = operation.numero || operation.mobile_id || "MOBILE";
+
+  ctx.textAlign = "left";
+  ctx.font = "22px Consolas, monospace";
+  ctx.fillText(`CONTROLE ${control}`, 14, y);
+  y += 28;
+  ctx.fillText(`DATA     ${dateText}`, 14, y);
+  y += 22;
+
+  ctx.strokeStyle = "#111111";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(12, y);
+  ctx.lineTo(width - 12, y);
+  ctx.stroke();
+  y += 24;
+
+  ctx.textAlign = "center";
+  ctx.font = "700 22px Consolas, monospace";
+  ctx.fillText("DADOS DA OPERACAO", width / 2, y);
+  y += 30;
+  ctx.textAlign = "left";
+  ctx.font = "22px Consolas, monospace";
+  ctx.fillText("TIPO", 14, y);
+  ctx.fillText("Compra", 132, y);
+  y += 28;
+  ctx.fillText("CLIENTE", 14, y);
+  fitText(ctx, operation.cliente_nome || "", 132, y, width - 150);
+  y += 22;
+
+  ctx.beginPath();
+  ctx.moveTo(12, y);
+  ctx.lineTo(width - 12, y);
+  ctx.stroke();
+  y += 24;
+
+  ctx.textAlign = "center";
+  ctx.font = "700 22px Consolas, monospace";
+  ctx.fillText("PRODUTOS", width / 2, y);
+  y += 28;
+
+  ctx.textAlign = "left";
+  ctx.font = "700 16px Consolas, monospace";
+  ctx.fillText("MATERIAL", 14, y);
+  ctx.textAlign = "right";
+  ctx.fillText("QTD", 278, y);
+  ctx.fillText("DESC", 360, y);
+  ctx.fillText("V/KG", 448, y);
+  ctx.fillText("TOTAL", width - 14, y);
+  y += 20;
+
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(12, y);
+  ctx.lineTo(width - 12, y);
+  ctx.stroke();
+  y += 25;
+
+  ctx.font = "700 19px Consolas, monospace";
+  const rows = receiptItems.length ? receiptItems : [{ material_nome: "", peso_liquido: 0, desconto: 0, preco_kg: 0, subtotal: 0 }];
+  rows.forEach((item) => {
+    ctx.textAlign = "left";
+    fitText(ctx, item.material_nome, 14, y, 195);
+    ctx.textAlign = "right";
+    ctx.fillText(numberBr(item.peso_liquido), 278, y);
+    ctx.fillText(numberBr(item.desconto), 360, y);
+    ctx.fillText(numberBr(item.preco_kg), 448, y);
+    ctx.fillText(numberBr(item.subtotal), width - 14, y);
+    y += rowHeight;
   });
+
+  ctx.beginPath();
+  ctx.moveTo(12, y - 8);
+  ctx.lineTo(width - 12, y - 8);
+  ctx.stroke();
+  y += 18;
+
+  ctx.textAlign = "left";
+  ctx.font = "22px Consolas, monospace";
+  ctx.fillText("PESO TOTAL", 14, y);
+  ctx.textAlign = "right";
+  ctx.fillText(`${numberBr(totalWeight)} kg`, 452, y);
+  y += 36;
+
+  ctx.textAlign = "left";
+  ctx.font = "700 26px Consolas, monospace";
+  ctx.fillText("TOTAL", 36, y);
+  ctx.textAlign = "right";
+  ctx.fillText(money(operation.total), width - 22, y);
+  y += 46;
+
+  if (operation.observacao) {
+    ctx.textAlign = "left";
+    ctx.font = "16px Consolas, monospace";
+    ctx.fillText("OBSERVACOES", 14, y);
+    y += 22;
+    fitText(ctx, operation.observacao, 14, y, width - 28);
+    y += 30;
+  }
+
+  ctx.textAlign = "center";
+  ctx.font = "700 20px Consolas, monospace";
+  ctx.fillText("Obrigado pela preferencia!", width / 2, y);
+}
+
+async function drawReceiptPreview(operation, text) {
+  const canvas = el("receiptCanvas");
+  const receiptOperation = operation || receiptOperationFromText(text);
+  const logo = await loadReceiptLogo();
+  drawReceiptImage(canvas, receiptOperation, logo);
+}
+
+function receiptCanvas(text, operation = currentReceiptOperation) {
+  const canvas = document.createElement("canvas");
+  drawReceiptImage(canvas, operation || receiptOperationFromText(text), null);
   return canvas;
 }
 
 async function saveReceiptImage() {
   if (!currentReceiptText) return;
-  const canvas = receiptCanvas(currentReceiptText);
+  const canvas = el("receiptCanvas");
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
   const file = new File([blob], `comprovante-${Date.now()}.png`, { type: "image/png" });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -620,7 +804,7 @@ async function refreshOperations() {
   document.querySelectorAll("[data-receipt]").forEach((button) => {
     button.addEventListener("click", async () => {
       const op = (await getOperations()).find((item) => item.mobile_id === button.dataset.receipt);
-      if (op) showReceipt(op.comprovante || buildReceipt(op));
+      if (op) showReceipt(op.comprovante || buildReceipt(op), op);
     });
   });
   document.querySelectorAll("[data-edit-op]").forEach((button) => {

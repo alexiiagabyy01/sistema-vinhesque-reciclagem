@@ -558,6 +558,16 @@ dialog::backdrop {
   padding: 16px;
 }
 
+.receipt-canvas {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
 pre {
   max-height: 70vh;
   overflow: auto;
@@ -566,6 +576,10 @@ pre {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.82rem;
   line-height: 1.35;
+}
+
+#receiptText {
+  display: none;
 }
 
 @media (max-width: 420px) {

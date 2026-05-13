@@ -1,4 +1,4 @@
-const CACHE_NAME = "vinhesque-mobile-v12";
+const CACHE_NAME = "vinhesque-mobile-v13";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -6,7 +6,8 @@ const APP_SHELL = [
   "./app.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
-  "./icons/icon-512.png"
+  "./icons/icon-512.png",
+  "./icons/logo-vinhesque-preta.png"
 ];
 
 self.addEventListener("install", (event) => {
