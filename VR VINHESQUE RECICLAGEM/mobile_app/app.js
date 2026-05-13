@@ -14,11 +14,19 @@ let dashboard = {
 };
 let syncTimer;
 let isSyncing = false;
+let stagedItems = [];
+let editingOperationId = null;
+let editingOriginalCreatedAt = null;
+let currentReceiptText = "";
+let operationsMode = "receipts";
 
 const el = (id) => document.getElementById(id);
 const money = (value) => `R$ ${Number(value || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const kg = (value) => `${Number(value || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`;
 const parseDecimal = (value) => Number(String(value || "0").replace(/\./g, "").replace(",", ".")) || 0;
+const parseWeight = (value) => String(value || "").includes(",,")
+  ? String(value).split(/,,+/).reduce((sum, part) => sum + parseDecimal(part), 0)
+  : parseDecimal(value);
 const nowIso = () => new Date().toISOString();
 
 function openDb() {
@@ -110,6 +118,12 @@ function hydrateLists() {
   renderDashboard();
 }
 
+function sameLocalDate(isoValue, date = new Date()) {
+  const parsed = new Date(isoValue);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return parsed.toLocaleDateString("pt-BR") === date.toLocaleDateString("pt-BR");
+}
+
 function escapeHtml(value) {
   return String(value || "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -151,13 +165,14 @@ async function fetchBootstrap() {
   return payload;
 }
 
-function renderDashboard() {
-  const resumo = dashboard.resumo_dia || {};
+async function renderDashboard() {
+  const operations = db ? await getOperations().catch(() => []) : [];
+  const todayBuys = operations.filter((op) => op.tipo === "COMPRA" && sameLocalDate(op.created_at));
+  const totalToday = todayBuys.reduce((sum, op) => sum + Number(op.total || 0), 0);
   el("userName").textContent = dashboard.usuario || "Administrador";
   el("lastSyncText").textContent = dashboard.ultima_sincronizacao || "--/--/---- --:--";
-  el("summaryBuys").textContent = resumo.compras || 0;
-  el("summarySales").textContent = resumo.vendas || 0;
-  el("summaryTotal").textContent = Number(resumo.total_vendas || 0).toLocaleString("pt-BR", {
+  el("summaryBuys").textContent = todayBuys.length;
+  el("summaryTotal").textContent = Number(totalToday || 0).toLocaleString("pt-BR", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
@@ -170,12 +185,13 @@ function setMode(nextMode) {
 }
 
 function addItem() {
+  if (document.querySelector(".item-row")) return;
   const node = el("itemTemplate").content.firstElementChild.cloneNode(true);
   const materialInput = node.querySelector(".material-name");
   const suggestions = node.querySelector(".material-suggestions");
   const inputs = node.querySelectorAll("input");
   node.querySelector(".remove-item").addEventListener("click", () => {
-    node.remove();
+    clearCurrentItem();
     updateTotal();
   });
   setupSuggestions(
@@ -192,6 +208,14 @@ function addItem() {
   inputs.forEach((input) => input.addEventListener("input", () => updateItem(node)));
   el("itemsList").appendChild(node);
   hydrateLists();
+}
+
+function clearCurrentItem() {
+  const node = document.querySelector(".item-row");
+  if (!node) return;
+  node.querySelectorAll("input").forEach((input) => {
+    input.value = "";
+  });
 }
 
 function setupSuggestions(input, box, sourceFn, onSelect, formatFn) {
@@ -269,7 +293,7 @@ function fillItemPrice(node) {
 }
 
 function updateItem(node) {
-  const gross = parseDecimal(node.querySelector(".gross").value);
+  const gross = parseWeight(node.querySelector(".gross").value);
   const discount = parseDecimal(node.querySelector(".discount").value);
   const price = parseDecimal(node.querySelector(".price").value);
   const liquid = Math.max(gross - discount, 0);
@@ -278,7 +302,95 @@ function updateItem(node) {
   updateTotal();
 }
 
+function collectCurrentItem() {
+  const node = document.querySelector(".item-row");
+  if (!node) return null;
+  const materialName = node.querySelector(".material-name").value.trim();
+  const grossText = node.querySelector(".gross").value.trim();
+  const priceText = node.querySelector(".price").value.trim();
+  const hasAnyValue = materialName || grossText || priceText || node.querySelector(".discount").value.trim();
+  if (!hasAnyValue) return null;
+  const material = materialByName(materialName);
+  const pesoBruto = parseWeight(grossText);
+  const desconto = parseDecimal(node.querySelector(".discount").value);
+  const pesoLiquido = Math.max(pesoBruto - desconto, 0);
+  const precoKg = parseDecimal(priceText);
+  return {
+    material_id: material ? material.id : null,
+    material_nome: materialName,
+    peso_bruto: pesoBruto,
+    desconto,
+    peso_liquido: pesoLiquido,
+    preco_kg: precoKg,
+    subtotal: pesoLiquido * precoKg
+  };
+}
+
 function collectItems() {
+  const current = collectCurrentItem();
+  return [
+    ...stagedItems,
+    ...(current ? [current] : [])
+  ];
+}
+
+function commitCurrentItem() {
+  const current = collectCurrentItem();
+  if (!current) {
+    alert("Preencha o material para adicionar.");
+    return false;
+  }
+  validateItem(current);
+  stagedItems.push(current);
+  clearCurrentItem();
+  renderStagedItems();
+  updateTotal();
+  document.querySelector(".material-name")?.focus();
+  return true;
+}
+
+function renderStagedItems() {
+  const list = el("stagedItemsList");
+  if (!list) return;
+  list.innerHTML = stagedItems.length ? stagedItems.map((item, index) => `
+    <article class="staged-item">
+      <div>
+        <strong>${escapeHtml(item.material_nome)}</strong>
+        <span>${kg(item.peso_liquido)} x ${money(item.preco_kg)} = ${money(item.subtotal)}</span>
+      </div>
+      <button type="button" data-edit-item="${index}">Editar</button>
+      <button type="button" data-remove-item="${index}">Excluir</button>
+    </article>
+  `).join("") : "<p class=\"hint compact-hint\">Nenhum item adicionado.</p>";
+  list.querySelectorAll("[data-remove-item]").forEach((button) => {
+    button.addEventListener("click", () => {
+      stagedItems.splice(Number(button.dataset.removeItem), 1);
+      renderStagedItems();
+      updateTotal();
+    });
+  });
+  list.querySelectorAll("[data-edit-item]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number(button.dataset.editItem);
+      const item = stagedItems.splice(index, 1)[0];
+      renderStagedItems();
+      fillCurrentItem(item);
+      updateTotal();
+    });
+  });
+}
+
+function fillCurrentItem(item) {
+  addItem();
+  const node = document.querySelector(".item-row");
+  node.querySelector(".material-name").value = item.material_nome || "";
+  node.querySelector(".gross").value = Number(item.peso_bruto || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+  node.querySelector(".discount").value = Number(item.desconto || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+  node.querySelector(".price").value = Number(item.preco_kg || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+  updateItem(node);
+}
+
+function collectItemsFromRows() {
   return Array.from(document.querySelectorAll(".item-row")).map((node) => {
     const materialName = node.querySelector(".material-name").value.trim();
     const material = materialByName(materialName);
@@ -303,18 +415,20 @@ function updateTotal() {
   el("totalValue").textContent = money(total);
 }
 
+function validateItem(item) {
+  if (!item.material_nome || !item.peso_liquido || !item.preco_kg) {
+    throw new Error("Confira material, peso e preco dos itens.");
+  }
+  if (!item.material_id && materials.length) {
+    throw new Error(`Material nao encontrado: ${item.material_nome}`);
+  }
+}
+
 function validateOperation(items) {
   if (!el("clientName").value.trim()) throw new Error("Informe o cliente.");
   if (!items.length) throw new Error("Adicione pelo menos um item.");
   for (const item of items) {
-    if (!item.material_nome || !item.peso_liquido || !item.preco_kg) {
-      throw new Error("Confira material, peso e preco dos itens.");
-    }
-    if (!item.material_id) {
-      if (materials.length) {
-        throw new Error(`Material nao encontrado: ${item.material_nome}`);
-      }
-    }
+    validateItem(item);
   }
 }
 
@@ -401,7 +515,7 @@ async function submitOperation(event) {
     validateOperation(itens);
     const total = itens.reduce((sum, item) => sum + item.subtotal, 0);
     const operation = {
-      mobile_id: `MOB-${Date.now()}`,
+      mobile_id: editingOperationId || `MOB-${Date.now()}`,
       tipo: mode,
       cliente_nome: el("clientName").value.trim(),
       cliente_documento: el("clientDoc").value.trim(),
@@ -410,7 +524,7 @@ async function submitOperation(event) {
       observacao: el("note").value.trim(),
       itens,
       total,
-      created_at: nowIso(),
+      created_at: editingOriginalCreatedAt || nowIso(),
       status: "pending"
     };
     operation.comprovante = buildReceipt(operation);
@@ -426,33 +540,128 @@ async function submitOperation(event) {
 function resetForm() {
   el("operationForm").reset();
   el("itemsList").innerHTML = "";
+  stagedItems = [];
+  editingOperationId = null;
+  editingOriginalCreatedAt = null;
+  renderStagedItems();
   addItem();
   setMode(mode);
 }
 
 function showReceipt(text) {
+  currentReceiptText = text;
   el("receiptText").textContent = text;
   el("receiptDialog").showModal();
+}
+
+function receiptCanvas(text) {
+  const lines = String(text || "").split("\n");
+  const scale = Math.max(window.devicePixelRatio || 1, 2);
+  const fontSize = 15;
+  const lineHeight = 22;
+  const padding = 22;
+  const width = 420;
+  const height = padding * 2 + lines.length * lineHeight;
+  const canvas = document.createElement("canvas");
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(scale, scale);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "#111827";
+  ctx.font = `${fontSize}px Consolas, monospace`;
+  ctx.textBaseline = "top";
+  lines.forEach((line, index) => {
+    ctx.fillText(line, padding, padding + index * lineHeight);
+  });
+  return canvas;
+}
+
+async function saveReceiptImage() {
+  if (!currentReceiptText) return;
+  const canvas = receiptCanvas(currentReceiptText);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  const file = new File([blob], `comprovante-${Date.now()}.png`, { type: "image/png" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    await navigator.share({ files: [file], title: "Comprovante Vinhesque" });
+    return;
+  }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = file.name;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 async function refreshOperations() {
   const operations = await getOperations();
   const pending = operations.filter((op) => op.status !== "synced").length;
   el("pendingStatus").textContent = `${pending} pendente${pending === 1 ? "" : "s"}`;
+  const isHistory = operationsMode === "history";
+  el("operationsTitle").textContent = isHistory ? "Historico" : "Comprovantes";
+  el("operationsSubtitle").textContent = isHistory ? "Lancamentos do aparelho" : "Comprovantes salvos";
+  el("clearSyncedButton").hidden = !isHistory;
   el("operationsList").innerHTML = operations.length ? operations.map((op) => `
     <article class="operation-row">
-      <strong>${op.tipo} - ${escapeHtml(op.cliente_nome)}</strong>
+      <strong>Compra - ${escapeHtml(op.cliente_nome)}</strong>
       <span>${new Date(op.created_at).toLocaleString("pt-BR")} - ${money(op.total)}</span>
-      <span>${op.status === "synced" ? "Sincronizado" : "Pendente"}</span>
-      <button type="button" data-receipt="${op.mobile_id}">Ver comprovante</button>
+      <span>${op.status === "synced" ? "Sincronizado" : op.status === "error" ? "Erro" : "Pendente"}</span>
+      <div class="operation-actions">
+        <button type="button" data-receipt="${op.mobile_id}">Comprovante</button>
+        ${isHistory ? `<button type="button" data-edit-op="${op.mobile_id}">Editar</button>
+        <button type="button" data-delete-op="${op.mobile_id}">Excluir</button>` : ""}
+      </div>
     </article>
-  `).join("") : "<p class=\"hint\">Nenhum lancamento salvo neste iPhone.</p>";
+  `).join("") : "<p class=\"hint\">Nenhum lancamento salvo neste aparelho.</p>";
   document.querySelectorAll("[data-receipt]").forEach((button) => {
     button.addEventListener("click", async () => {
       const op = (await getOperations()).find((item) => item.mobile_id === button.dataset.receipt);
       if (op) showReceipt(op.comprovante || buildReceipt(op));
     });
   });
+  document.querySelectorAll("[data-edit-op]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const op = (await getOperations()).find((item) => item.mobile_id === button.dataset.editOp);
+      if (!op) return;
+      if (op.status === "synced") {
+        alert("Lancamento ja sincronizado. Edite pelo sistema do notebook.");
+        return;
+      }
+      loadOperationForEdit(op);
+    });
+  });
+  document.querySelectorAll("[data-delete-op]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const op = (await getOperations()).find((item) => item.mobile_id === button.dataset.deleteOp);
+      if (!op) return;
+      if (op.status === "synced") {
+        alert("Lancamento ja sincronizado. Exclua pelo sistema do notebook.");
+        return;
+      }
+      if (!confirm("Excluir este lancamento deste aparelho?")) return;
+      await deleteOperation(op.mobile_id);
+      await refreshOperations();
+    });
+  });
+  renderDashboard();
+}
+
+function loadOperationForEdit(operation) {
+  editingOperationId = operation.mobile_id;
+  editingOriginalCreatedAt = operation.created_at;
+  el("clientName").value = operation.cliente_nome || "";
+  el("clientDoc").value = operation.cliente_documento || "";
+  el("clientPhone").value = operation.cliente_telefone || "";
+  el("note").value = operation.observacao || "";
+  stagedItems = [...(operation.itens || [])];
+  clearCurrentItem();
+  renderStagedItems();
+  updateTotal();
+  showView("form");
 }
 
 async function syncPending(options = {}) {
@@ -508,15 +717,24 @@ async function clearSynced() {
   const operations = await getOperations();
   await Promise.all(operations.filter((op) => op.status === "synced").map((op) => deleteOperation(op.mobile_id)));
   await refreshOperations();
+  renderDashboard();
 }
 
 function showView(name) {
+  if (name === "pending" || name === "history") {
+    operationsMode = name === "history" ? "history" : "receipts";
+    refreshOperations();
+  }
+  const viewName = name === "history" ? "pending" : name;
   document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("active"));
-  el(`${name}View`).classList.add("active");
+  el(`${viewName}View`).classList.add("active");
   document.querySelectorAll(`[data-tab="${name}"]`).forEach((item) => {
     if (item.classList.contains("nav-item")) item.classList.add("active");
   });
+  if (name === "history" && !document.querySelector('[data-tab="history"].nav-item')) {
+    document.querySelector('[data-tab="pending"].nav-item')?.classList.add("active");
+  }
 }
 
 function wireTabs() {
@@ -546,9 +764,16 @@ async function init() {
   el("syncToken").value = localStorage.getItem("vinhesqueSyncToken") || "";
   wireTabs();
   setupSuggestions(el("clientName"), el("clientSuggestions"), () => clients, selectClient, formatClientSuggestion);
-  el("addItemButton").addEventListener("click", addItem);
+  el("addItemButton").addEventListener("click", () => {
+    try {
+      commitCurrentItem();
+    } catch (error) {
+      alert(error.message);
+    }
+  });
   el("operationForm").addEventListener("submit", submitOperation);
   el("closeReceiptButton").addEventListener("click", () => el("receiptDialog").close());
+  el("saveReceiptImageButton").addEventListener("click", () => saveReceiptImage().catch((error) => alert(error.message)));
   el("heroSyncButton").addEventListener("click", () => syncPending());
   el("clearSyncedButton").addEventListener("click", clearSynced);
   el("saveSettingsButton").addEventListener("click", () => {
@@ -580,6 +805,7 @@ async function init() {
     fetchBootstrap().catch(() => null);
   }
   addItem();
+  renderStagedItems();
   setMode("COMPRA");
   await refreshOperations();
   if ("serviceWorker" in navigator && ["https:", "http:"].includes(location.protocol)) {

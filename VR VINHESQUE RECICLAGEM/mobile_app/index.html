@@ -47,7 +47,7 @@
           </button>
         </div>
         <div class="quick-grid secondary-actions">
-          <button class="quick-card" type="button" data-tab="pending">
+          <button class="quick-card" type="button" data-tab="history">
             <span class="quick-icon purple">▤</span>
             <strong>Comprovantes</strong>
             <small>Ver comprovantes</small>
@@ -68,11 +68,7 @@
             <strong id="summaryBuys">0</strong>
           </div>
           <div>
-            <span>Vendas</span>
-            <strong id="summarySales">0</strong>
-          </div>
-          <div>
-            <span>Total (R$)</span>
+            <span>Total lancado</span>
             <strong id="summaryTotal">0,00</strong>
           </div>
         </div>
@@ -109,9 +105,10 @@
         <section class="items-box">
           <div class="section-title">
             <h2>Itens</h2>
-            <button id="addItemButton" type="button">Adicionar</button>
+            <button id="addItemButton" type="button">Adicionar item</button>
           </div>
           <div id="itemsList"></div>
+          <div id="stagedItemsList" class="staged-items-list"></div>
         </section>
 
         <label>
@@ -133,11 +130,11 @@
         <button class="back-button" type="button" data-tab="home">‹</button>
         <div>
           <p class="eyebrow">Movimentacoes</p>
-          <h1>Historico</h1>
+          <h1 id="operationsTitle">Comprovantes</h1>
         </div>
       </header>
       <div class="section-title">
-        <h2>Lancamentos</h2>
+        <h2 id="operationsSubtitle">Comprovantes salvos</h2>
         <button id="clearSyncedButton" type="button">Limpar sincronizados</button>
       </div>
       <div id="operationsList" class="operations-list"></div>
@@ -175,6 +172,7 @@
   <dialog id="receiptDialog">
     <article class="receipt-card">
       <pre id="receiptText"></pre>
+      <button id="saveReceiptImageButton" type="button">Salvar imagem</button>
       <button id="closeReceiptButton" class="primary" type="button">Fechar</button>
     </article>
   </dialog>
@@ -189,7 +187,7 @@
       <div class="grid-2">
         <label>
           Peso bruto
-          <input class="gross" inputmode="decimal" required placeholder="0,00">
+          <input class="gross" inputmode="decimal" required placeholder="20,,50,,30">
         </label>
         <label>
           Desconto
