@@ -515,20 +515,9 @@ textarea {
   line-height: 1.45;
 }
 
-.bottom-nav {
-  display: none;
-}
-
+.bottom-nav,
 .floating-menu-button {
-  position: fixed;
-  right: 16px;
-  bottom: calc(16px + env(safe-area-inset-bottom));
-  z-index: 10;
-  min-height: 44px;
-  padding: 0 16px;
-  border: 1px solid #dce8d6;
-  background: #ffffff;
-  box-shadow: 0 10px 24px rgb(17 24 39 / 0.14);
+  display: none;
 }
 
 .nav-item {
