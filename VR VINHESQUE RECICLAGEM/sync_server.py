@@ -281,6 +281,65 @@ def fetch_mobile_operations():
     return operations
 
 
+def import_desktop_catalog(payload):
+    clientes = payload.get("clientes") or []
+    materiais = payload.get("materiais") or []
+    with connect_db() as conn:
+        for cliente in clientes:
+            nome = normalize_name(cliente.get("nome"))
+            if not nome:
+                continue
+            existing = conn.execute("SELECT id FROM clientes WHERE lower(trim(nome)) = lower(trim(?))", (nome,)).fetchone()
+            values = (
+                nome,
+                str(cliente.get("telefone") or "").strip(),
+                str(cliente.get("cnpj") or "").strip(),
+                str(cliente.get("cidade") or "").strip(),
+                str(cliente.get("observacao") or "").strip(),
+                str(cliente.get("tipo") or "Comprador").strip() or "Comprador",
+                str(cliente.get("email") or "").strip(),
+                str(cliente.get("estado") or "").strip(),
+                str(cliente.get("endereco") or "").strip(),
+            )
+            if existing:
+                conn.execute("""
+                    UPDATE clientes
+                    SET telefone = ?, cnpj = ?, cidade = ?, observacao = ?, tipo = ?, email = ?, estado = ?, endereco = ?
+                    WHERE id = ?
+                """, (*values[1:], existing["id"]))
+            else:
+                conn.execute("""
+                    INSERT INTO clientes (nome, telefone, cnpj, cidade, observacao, tipo, email, estado, endereco)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, values)
+
+        for material in materiais:
+            nome = normalize_name(material.get("nome"))
+            if not nome:
+                continue
+            existing = conn.execute("SELECT id FROM materiais WHERE lower(trim(nome)) = lower(trim(?))", (nome,)).fetchone()
+            values = (
+                nome,
+                float(material.get("preco_compra") or 0),
+                float(material.get("preco_venda") or 0),
+                str(material.get("descricao") or "").strip(),
+                float(material.get("estoque_minimo") or 0),
+                int(material.get("ativo", 1)),
+            )
+            if existing:
+                conn.execute("""
+                    UPDATE materiais
+                    SET preco_compra = ?, preco_venda = ?, descricao = ?, estoque_minimo = ?, ativo = ?
+                    WHERE id = ?
+                """, (*values[1:], existing["id"]))
+            else:
+                conn.execute("""
+                    INSERT INTO materiais (nome, preco_compra, preco_venda, descricao, estoque_minimo, ativo)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, values)
+    return {"ok": True, "clientes": len(clientes), "materiais": len(materiais)}
+
+
 def saldo_material(conn, material_id):
     row = conn.execute("""
         SELECT COALESCE(
@@ -536,6 +595,8 @@ def import_operation(operation):
             material = None
             if material_id:
                 material = conn.execute("SELECT * FROM materiais WHERE id = ?", (material_id,)).fetchone()
+                if material and normalize_name(material["nome"]).lower() != normalize_name(item.get("material_nome")).lower():
+                    material = None
             if not material:
                 material_name = normalize_name(item.get("material_nome"))
                 material = conn.execute("SELECT * FROM materiais WHERE lower(trim(nome)) = lower(trim(?))", (material_name,)).fetchone()
@@ -675,6 +736,13 @@ class SyncHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/desktop-catalog":
+            if not self.authorized():
+                return self.send_json({"error": "Token de sincronizacao invalido."}, status=401)
+            try:
+                return self.send_json(import_desktop_catalog(self.read_json()))
+            except Exception as exc:
+                return self.send_json({"error": str(exc)}, status=400)
         if parsed.path != "/api/sync":
             return self.send_json({"error": "Rota nao encontrada."}, status=404)
         if not self.authorized():
